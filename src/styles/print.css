@@ -25,7 +25,7 @@
 /* 序号等宽右对齐、收窄占位，避免两位数序号白白挤占题目空间 */
 .q-item .idx, .v-expr .idx, .ans-item span.k {
   color: #bbb;
-  font-size: 0.85em;
+  font-size: 0.75em;
   display: inline-block;
   min-width: 1.5em;
   text-align: right;
