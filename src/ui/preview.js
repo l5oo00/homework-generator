@@ -7,15 +7,20 @@ function el(tag, cls, text) {
   return n
 }
 
+// 标题由调用方传入：题目页 / 答案页共用同一套页眉，只留做题后手填的「用时」。
 function sheetHead(title) {
   const head = el('div', 'sheet-head')
   head.appendChild(el('div', 'sheet-title', title))
   const meta = el('div', 'sheet-meta')
-  meta.appendChild(el('span', '姓名：____________'))
-  meta.appendChild(el('span', '日期：____________'))
-  meta.appendChild(el('span', '用时：____________'))
+  meta.appendChild(el('span', null, '用时：____________'))
   head.appendChild(meta)
   return head
+}
+
+// 「姓名 科目 课后练习题(日期)」，答案页在末尾追加「答案」。
+export function sheetTitle(sheet) {
+  const base = `${sheet.person} ${sheet.subjectName} 课后练习题(${sheet.date})`
+  return base
 }
 
 function renderQuestionSection(sec, sheet) {
@@ -87,13 +92,13 @@ export function renderSheets(sheet, includeAnswers = true) {
     if (sec.config.fullPage) {
       if (current) { frag.appendChild(current); current = null }
       const page = el('div', 'sheet full-page-sheet')
-      page.appendChild(sheetHead('作业题'))
+      page.appendChild(sheetHead(sheetTitle(sheet)))
       page.appendChild(renderQuestionSection(sec, sheet))
       frag.appendChild(page)
     } else {
       if (!current) {
         current = el('div', 'sheet')
-        current.appendChild(sheetHead('作业题'))
+        current.appendChild(sheetHead(sheetTitle(sheet)))
       }
       current.appendChild(renderQuestionSection(sec, sheet))
     }
@@ -102,7 +107,7 @@ export function renderSheets(sheet, includeAnswers = true) {
 
   if (includeAnswers) {
     const answerSheet = el('div', 'sheet answer-sheet')
-    answerSheet.appendChild(sheetHead('答案'))
+    answerSheet.appendChild(sheetHead(sheetTitle(sheet) + ' 答案'))
     sheet.sections.forEach(sec => answerSheet.appendChild(renderAnswerSection(sec)))
     frag.appendChild(answerSheet)
   }

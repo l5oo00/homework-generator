@@ -10,16 +10,32 @@ import { renderField, renderTypeSelector } from './ui/configPanel.js'
 import { renderSheets } from './ui/preview.js'
 import { downloadText } from './ui/download.js'
 import { downloadQuestionAnswerFile, openAnswerDialog, renderAnswerViewIfRequested } from './ui/answerShare.js'
-import { saveFinalSheet, listFinalSheets, deleteFinalSheet } from './storage/history.js'
-import { loadSelectionState, saveSelectionState } from './storage/selection.js'
-import { loadPresetState, addCustomPreset, removeCustomPreset, removeBuiltinPreset, exportPresetsJson, importPresetsJson, presetMatchesConfig } from './ui/presets.js'
+import {
+  saveFinalSheet, listFinalSheets, deleteFinalSheet,
+  deleteFinalSheetsOfPerson, pruneFinalSheets
+} from './storage/history.js'
+import {
+  loadSelectionState, saveSelectionState, deleteSelectionState, pruneSelectionStates
+} from './storage/selection.js'
+import { loadPeople, savePeople, addPerson, selectPerson, removePerson } from './storage/people.js'
+import {
+  loadPresetState, addCustomPreset, removeCustomPreset, removeBuiltinPreset,
+  exportPresetsJson, importPresetsJson, presetMatchesConfig,
+  deletePresetState, prunePresetStates
+} from './ui/presets.js'
 
 const app = document.getElementById('app')
-const savedSelection = loadSelectionState()
 
-// 全局状态：科目 + 全局配置 + 每个题型是否选中及其配置
+// 启动自检：姓名名单是权威，剔除三份存储里「名单不存在」的人（含旧数据无主人记录）。
+let people = loadPeople()
+pruneSelectionStates(people.names)
+prunePresetStates(people.names)
+pruneFinalSheets(people.names).catch(() => {})
+
+// 全局状态：当前人 + 科目 + 全局配置 + 每个题型是否选中及其配置
 const state = {
-  subject: SUBJECTS.some(s => s.id === savedSelection.subject) ? savedSelection.subject : SUBJECTS[0].id,
+  person: people.current,
+  subject: SUBJECTS[0].id,
   global: defaultGlobalConfig(),
   selected: {}
 }
@@ -31,38 +47,46 @@ const historyView = { records: null, activeId: null, sheet: null, error: null }
 let uiMode = 'config' // 'config' | 'history'
 
 // 所有题型的当前预设映射（typeId → 预设数组），供全局导出使用。
-// 保存/删除预设后由 rebuildPresetMap() 刷新。
 const presetMap = {}
 
-for (const sub of SUBJECTS) {
-  for (const t of typesForSubject(sub.id)) {
-    // 恢复预设状态：内置按原始下标过滤已删除项，自定义预设排在最前
-    const st = loadPresetState(t.id)
-    t.builtinPresets = t.presets
-      .map((p, i) => ({ ...p, custom: false, builtinIndex: i }))
-      .filter(p => !st.deletedBuiltin.includes(p.builtinIndex))
-    t.presets = [
-      ...st.custom.map(p => ({ ...p, custom: true })),
-      ...t.builtinPresets
-    ]
-    // 有存档就恢复存档；没有则默认套用第一个预设。字段以默认配置补齐。
-    const defaults = t.defaultConfig()
-    const savedType = savedSelection.types[t.id]
-    const config = { ...defaults }
-    if (savedType && savedType.config && typeof savedType.config === 'object') {
-      for (const key of Object.keys(defaults)) {
-        if (savedType.config[key] !== undefined) config[key] = savedType.config[key]
+// 导入当前人的配置到内存。题型对象是全局单例，首次访问时保存原始预设引用，
+// 之后每次按人重建，避免上一个的人自定义预设串到下一个。
+function loadPersonData(person) {
+  const saved = person ? loadSelectionState(person) : { subject: null, types: {} }
+  state.person = person
+  state.subject = SUBJECTS.some(s => s.id === saved.subject) ? saved.subject : SUBJECTS[0].id
+  state.selected = {}
+  for (const sub of SUBJECTS) {
+    for (const t of typesForSubject(sub.id)) {
+      if (!t.originalPresets) t.originalPresets = t.presets
+      const st = person ? loadPresetState(person, t.id) : { custom: [], deletedBuiltin: [] }
+      t.builtinPresets = t.originalPresets
+        .map((p, i) => ({ ...p, custom: false, builtinIndex: i }))
+        .filter(p => !st.deletedBuiltin.includes(p.builtinIndex))
+      t.presets = [
+        ...st.custom.map(p => ({ ...p, custom: true })),
+        ...t.builtinPresets
+      ]
+      const defaults = t.defaultConfig()
+      const savedType = saved.types[t.id]
+      const config = { ...defaults }
+      if (savedType && savedType.config && typeof savedType.config === 'object') {
+        for (const key of Object.keys(defaults)) {
+          if (savedType.config[key] !== undefined) config[key] = savedType.config[key]
+        }
+      } else if (t.presets[0]) {
+        Object.assign(config, JSON.parse(JSON.stringify(t.presets[0].values)))
       }
-    } else if (t.presets[0]) {
-      Object.assign(config, JSON.parse(JSON.stringify(t.presets[0].values)))
+      state.selected[t.id] = { selected: !!(savedType && savedType.selected), config }
+      presetMap[t.id] = t.presets
     }
-    state.selected[t.id] = { selected: !!(savedType && savedType.selected), config }
-    presetMap[t.id] = t.presets
   }
 }
 
+loadPersonData(state.person)
+
 function persistSelections() {
-  saveSelectionState(state.subject, state.selected)
+  if (state.person) saveSelectionState(state.person, state.subject, state.selected)
 }
 
 function rebuildPresetMap() {
@@ -78,13 +102,19 @@ function el(tag, cls, text) {
   return n
 }
 
+function dateToday() {
+  const d = new Date()
+  const p = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
 function currentSelections() {
   return Object.entries(state.selected)
     .filter(([, s]) => s.selected)
     .map(([typeId, s]) => ({ typeId, config: s.config }))
 }
 
-// 固化当前配置为预设：拒绝同名或与已有配置重复
+// 固化当前配置为预设：拒绝同名或与已有配置重复（写入当前人的存储）
 function savePreset(type, config, name) {
   if (type.presets.some(p => p.name === name)) {
     alert(`已存在同名预设「${name}」，请换一个名字`)
@@ -96,7 +126,7 @@ function savePreset(type, config, name) {
     return null
   }
   try {
-    const { persisted } = addCustomPreset(type.id, name, config)
+    const { persisted } = addCustomPreset(state.person, type.id, name, config)
     type.presets.unshift({ name, values: JSON.parse(JSON.stringify(config)), custom: true })
     rebuildPresetMap()
     return { persisted }
@@ -106,11 +136,11 @@ function savePreset(type, config, name) {
   }
 }
 
-// 删除预设：内置按原始下标记入状态，刷新后也不会恢复
+// 删除预设（当前人的）：内置按原始下标记入状态，刷新后也不会恢复
 function deletePreset(type, preset) {
   try {
-    if (preset.custom) removeCustomPreset(type.id, preset.name)
-    else removeBuiltinPreset(type.id, preset.builtinIndex)
+    if (preset.custom) removeCustomPreset(state.person, type.id, preset.name)
+    else removeBuiltinPreset(state.person, type.id, preset.builtinIndex)
     const i = type.presets.indexOf(preset)
     if (i >= 0) type.presets.splice(i, 1)
     rebuildPresetMap()
@@ -119,7 +149,7 @@ function deletePreset(type, preset) {
   }
 }
 
-// 导出选中题型的预设 JSON：按题型 id 分组
+// 导出选中题型的预设 JSON：读当前人的预设，JSON 本身不含姓名，可导入给任何人。
 function exportPresets(typeIds) {
   if (!typeIds.length) { alert('请至少选择一个题型'); return }
   try {
@@ -129,26 +159,19 @@ function exportPresets(typeIds) {
   }
 }
 
-// 导入预设 JSON：只覆盖文件里出现的题型的本地预设，其他题型不动。
-// 导入项和内置预设同名时以导入项为准（整组替换自定义预设，内置仍留在源码里）。
+// 导入预设 JSON：落到当前选中人名下，只覆盖文件里出现的题型，其他题型不动。
 function importPresets(text) {
   const validIds = Object.keys(presetMap)
   let result
   try {
-    result = importPresetsJson(text, validIds)
+    result = importPresetsJson(state.person, text, validIds)
   } catch (e) {
     alert('导入失败：' + e.message)
     return
   }
-  for (const id of result.applied) {
-    const t = allTypeById(id)
-    if (!t) continue
-    const imported = loadPresetState(id).custom.map(p => ({ ...p, custom: true }))
-    t.presets = [...imported, ...t.builtinPresets]
-  }
-  rebuildPresetMap()
+  loadPersonData(state.person)
   render()
-  alert(`导入完成：已更新 ${result.applied.length} 个题型的预设${result.skipped.length ? `，跳过 ${result.skipped.length} 个无效题型` : ''}${result.persisted ? '' : '（本地存储受限，仅本页有效）'}`)
+  alert(`已导入到「${state.person}」：更新 ${result.applied.length} 个题型的预设${result.skipped.length ? `，跳过 ${result.skipped.length} 个无效题型` : ''}${result.persisted ? '' : '（本地存储受限，仅本页有效）'}`)
 }
 
 function allTypeById(id) {
@@ -204,6 +227,16 @@ function render() {
   app.appendChild(wrap)
 }
 
+// 切人 / 删人后重置：预览清空回未生成态，加载该人的配置与预设。
+function switchPerson(name) {
+  people = name ? selectPerson(name) : people
+  state.person = people.current
+  preview.stage = 'empty'
+  preview.sheet = null
+  loadPersonData(state.person)
+  render()
+}
+
 // ── 配置视图：左配置、右预览（生成 → 定稿 → 打印/查看答案）────────
 function renderConfigView(layout, wrap) {
   const configCol = el('div', 'config-col no-print')
@@ -221,7 +254,7 @@ function renderConfigView(layout, wrap) {
   globalFields.replaceChildren(...GLOBAL_FIELDS.map(f => renderField(f, state.global)))
   configPanel.appendChild(globalFields)
 
-  // 预设管理：勾选要导出的题型 → 导出；导入 JSON 只覆盖文件里出现的题型
+  // 预设管理：勾选要导出的题型 → 导出；导入 JSON 落到当前选中人名下
   configPanel.appendChild(el('div', 'config-sub', '预设管理'))
   const allTypes = SUBJECTS.flatMap(sub => typesForSubject(sub.id))
   const pickBox = el('div', 'preset-pick')
@@ -259,12 +292,72 @@ function renderConfigView(layout, wrap) {
   presetOps.appendChild(importBtn)
   presetOps.appendChild(fileInput)
   configPanel.appendChild(presetOps)
-  configPanel.appendChild(el('div', 'hint', '导出勾选的题型预设为 JSON；导入时只覆盖文件里出现的题型，其余题型不变。'))
+  configPanel.appendChild(el('div', 'hint', '导出勾选的题型预设为 JSON（不含姓名，可导入给其他人）；导入时只覆盖文件里出现的题型，落到当前选中人名下。'))
   configCol.appendChild(configPanel)
+
+  // ① 选择姓名：列出人名单选；输入框新增；删除需确认并连带清该人数据
+  const personCard = el('div', 'card')
+  const ph = el('h2')
+  ph.appendChild(el('span', 'step', '①'))
+  ph.appendChild(document.createTextNode('选择姓名'))
+  personCard.appendChild(ph)
+  if (!people.names.length) {
+    personCard.appendChild(el('div', 'hint', '请先添加姓名，每人独立保存自己的预设与配置。'))
+  } else {
+    const personList = el('div', 'person-list')
+    for (const name of people.names) {
+      const row = el('label', 'person-item' + (name === state.person ? ' on' : ''))
+      const radio = document.createElement('input')
+      radio.type = 'radio'
+      radio.name = 'person'
+      radio.checked = name === state.person
+      radio.addEventListener('change', () => { if (radio.checked) switchPerson(name) })
+      row.appendChild(radio)
+      row.appendChild(el('span', null, name))
+      const del = el('button', 'btn subtle btn-mini danger person-del', '删除')
+      del.addEventListener('click', async (e) => {
+        e.preventDefault()
+        let historyCount = 0
+        try { historyCount = (await listFinalSheets(name)).length } catch { /* 读取失败仍允许删除 */ }
+        const msg = `删除「${name}」将同时删除该人的预设、配置记忆和 ${historyCount} 条定稿历史，不可恢复。确定删除？`
+        if (!confirm(msg)) return
+        try {
+          deleteSelectionState(name)
+          deletePresetState(name)
+          await deleteFinalSheetsOfPerson(name)
+        } catch (err) { alert('删除数据失败：' + err.message); return }
+        const result = removePerson(name)
+        if (!result.ok) { alert('删除姓名失败，请重试'); return }
+        people = result.state
+        switchPerson(people.current)
+      })
+      row.appendChild(del)
+      personList.appendChild(row)
+    }
+    personCard.appendChild(personList)
+  }
+  const addRow = el('div', 'person-add')
+  const nameInput = document.createElement('input')
+  nameInput.type = 'text'
+  nameInput.placeholder = '输入姓名'
+  nameInput.maxLength = 20
+  const addBtn = el('button', 'btn subtle btn-mini', '添加')
+  const doAdd = () => {
+    const result = addPerson(nameInput.value)
+    if (!result.ok) { alert(result.error); return }
+    people = result.state // 首个添加的人自动选中
+    switchPerson(result.state.current)
+  }
+  addBtn.addEventListener('click', doAdd)
+  nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') doAdd() })
+  addRow.appendChild(nameInput)
+  addRow.appendChild(addBtn)
+  personCard.appendChild(addRow)
+  configCol.appendChild(personCard)
 
   const subjectCard = el('div', 'card')
   const sh = el('h2')
-  sh.appendChild(el('span', 'step', '①'))
+  sh.appendChild(el('span', 'step', '②'))
   sh.appendChild(document.createTextNode('选择科目'))
   subjectCard.appendChild(sh)
   const subChips = el('div', 'chips')
@@ -283,7 +376,7 @@ function renderConfigView(layout, wrap) {
 
   const typeCard = el('div', 'card')
   const th = el('h2')
-  th.appendChild(el('span', 'step', '②'))
+  th.appendChild(el('span', 'step', '③'))
   th.appendChild(document.createTextNode('选择题型并配置（可多选）'))
   typeCard.appendChild(th)
   const types = typesForSubject(state.subject)
@@ -300,20 +393,29 @@ function renderConfigView(layout, wrap) {
   const previewCol = el('div', 'preview-col')
   const bar = el('div', 'preview-toolbar no-print')
   const genBtn = el('button', 'btn gen-btn', preview.stage === 'empty' ? '生成预览' : '重新生成预览')
+  if (!state.person) {
+    genBtn.disabled = true
+    genBtn.title = '请先选择姓名'
+  }
   genBtn.addEventListener('click', () => {
+    if (!state.person) return
     const selections = currentSelections()
     if (!selections.length) { alert('请至少选择一个题型'); return }
-    preview.sheet = generateSheet(selections, state.global)
+    const subjectName = SUBJECTS.find(s => s.id === state.subject).name
+    preview.sheet = generateSheet(selections, state.global, {
+      person: state.person, subjectName, date: dateToday()
+    })
     preview.stage = 'draft'
     render()
   })
   bar.appendChild(genBtn)
+  if (!state.person) bar.appendChild(el('span', 'hint', '请先在左侧选择或添加姓名，才能生成题目'))
 
   const actions = el('span', 'preview-actions')
   if (preview.stage === 'draft') {
     const finalBtn = el('button', 'btn', '定稿')
     finalBtn.addEventListener('click', async () => {
-      try { await saveFinalSheet(preview.sheet) }
+      try { await saveFinalSheet(state.person, preview.sheet) }
       catch (e) { alert('本地存档失败：' + e.message) }
       preview.stage = 'final'
       historyView.records = null // 下次进历史视图重新读
@@ -346,11 +448,11 @@ function renderConfigView(layout, wrap) {
   layout.appendChild(previewCol)
 }
 
-// ── 历史视图：左列表、右只读预览（无生成/重新生成）────────────
+// ── 历史视图：左列表、右只读预览（无生成/重新生成），只显示当前人的记录 ──
 function renderHistoryView(layout) {
   const historyCol = el('div', 'config-col no-print')
   const card = el('div', 'card history-card')
-  card.appendChild(el('h2', null, '历史记录（最近 7 天）'))
+  card.appendChild(el('h2', null, `历史记录（${state.person || '未选择姓名'} · 最近 7 天）`))
   const list = el('div', 'history-list')
   renderHistoryInto(list)
   card.appendChild(list)
@@ -370,7 +472,7 @@ function renderHistoryView(layout) {
     bar.appendChild(el('span', 'hint', '来自历史记录 · 只读预览'))
   } else {
     bar.appendChild(el('span', 'hint', historyView.records && !historyView.records.length
-      ? '暂无历史记录，去「配置」定稿一份吧'
+      ? '当前姓名暂无历史记录，去「配置」定稿一份吧'
       : '从左侧选择一条记录查看'))
   }
   previewCol.appendChild(bar)
@@ -463,16 +565,15 @@ function renderHistoryInto(container) {
   }
 }
 
-// 从 IndexedDB 读取记录并刷新；进入历史视图、定稿后、删除后调用。
+// 从 IndexedDB 读取当前人的记录并刷新；进入历史视图后调用。
 async function loadHistory() {
   try {
-    historyView.records = await listFinalSheets()
+    historyView.records = await listFinalSheets(state.person)
     historyView.error = null
   } catch (e) {
     historyView.records = []
     historyView.error = e.message
   }
-  // 首次进入自动打开最新一条，让右栏直接可用
   const found = historyView.records.find(r => r.id === historyView.activeId)
   if (!found && historyView.records.length) {
     historyView.activeId = historyView.records[0].id

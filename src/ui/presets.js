@@ -1,13 +1,13 @@
-// 预设状态存 localStorage：自定义预设 + 已删除的内置预设。
-// 浏览器限制存储时降级为当前页面有效，不影响使用。
-const KEY = 'homework-generator-preset-state'
+// 预设状态存 localStorage，按「姓名 → 题型 id」两层隔离。
+// v2 key：v1 全局无主人数据不再读取（直接丢弃）。浏览器限制存储时降级为当前页面有效。
+const KEY = 'homework-generator-preset-state-v2'
 
 function readAll() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) || '{}')
-    return { custom: s.custom || {}, deletedBuiltin: s.deletedBuiltin || {} }
+    return s && typeof s === 'object' && !Array.isArray(s) ? s : {}
   } catch {
-    return { custom: {}, deletedBuiltin: {} }
+    return {}
   }
 }
 
@@ -16,35 +16,44 @@ function writeAll(all) {
   catch { return false }
 }
 
-export function loadPresetState(typeId) {
+function bucket(all, person) {
+  if (!all[person] || typeof all[person] !== 'object') all[person] = { custom: {}, deletedBuiltin: {} }
+  return all[person]
+}
+
+export function loadPresetState(person, typeId) {
   const all = readAll()
+  const p = all[person] || {}
   return {
-    custom: all.custom[typeId] || [],
-    deletedBuiltin: all.deletedBuiltin[typeId] || []
+    custom: (p.custom && p.custom[typeId]) || [],
+    deletedBuiltin: (p.deletedBuiltin && p.deletedBuiltin[typeId]) || []
   }
 }
 
 // 新增自定义预设放第一位
-export function addCustomPreset(typeId, name, values) {
+export function addCustomPreset(person, typeId, name, values) {
   const all = readAll()
-  const list = all.custom[typeId] || []
+  const b = bucket(all, person)
+  const list = b.custom[typeId] || []
   list.unshift({ name, values: JSON.parse(JSON.stringify(values)) })
-  all.custom[typeId] = list
+  b.custom[typeId] = list
   return { persisted: writeAll(all) }
 }
 
-export function removeCustomPreset(typeId, name) {
+export function removeCustomPreset(person, typeId, name) {
   const all = readAll()
-  all.custom[typeId] = (all.custom[typeId] || []).filter(p => p.name !== name)
+  const b = bucket(all, person)
+  b.custom[typeId] = (b.custom[typeId] || []).filter(p => p.name !== name)
   return { persisted: writeAll(all) }
 }
 
 // 内置预设按原始下标记录删除，刷新后不再出现
-export function removeBuiltinPreset(typeId, builtinIndex) {
+export function removeBuiltinPreset(person, typeId, builtinIndex) {
   const all = readAll()
-  const set = new Set(all.deletedBuiltin[typeId] || [])
+  const b = bucket(all, person)
+  const set = new Set(b.deletedBuiltin[typeId] || [])
   set.add(builtinIndex)
-  all.deletedBuiltin[typeId] = [...set]
+  b.deletedBuiltin[typeId] = [...set]
   return { persisted: writeAll(all) }
 }
 
@@ -63,8 +72,7 @@ export function presetMatchesConfig(presetValues, config, defaults) {
 }
 
 // 导出预设 JSON：按题型 id 分组，只包含 typeIds 里指定的题型。
-// 结构是 { typeId: [{ name, values }, ...] }，其中 values 为该题型的完整配置。
-// 内置预设带 builtin: true 标记，方便区分；导入后统一作为该题型预设落本地。
+// 导出的是「当前选中人」的预设，JSON 本身不含姓名；导入给谁由导入时当前选中人决定。
 export function exportPresetsJson(typeIds, presetMap) {
   const out = {}
   for (const id of typeIds) {
@@ -74,24 +82,40 @@ export function exportPresetsJson(typeIds, presetMap) {
 }
 
 // 导入预设 JSON：只覆盖 JSON 里出现的题型的本地预设，其他题型原样保留。
-// 导入的预设整组替换该题型的自定义预设（内置预设是源码里的，不受影响）。
-// 返回 { applied: [typeId...], skipped: [...] }，供 UI 提示。
-export function importPresetsJson(text, validTypeIds) {
+// 写入当前选中人的存储；导入项整组替换该题型的自定义预设（内置不受影响）。
+export function importPresetsJson(person, text, validTypeIds) {
   const parsed = JSON.parse(text)
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('JSON 根节点必须是对象')
   }
   const all = readAll()
+  const b = bucket(all, person)
   const applied = [], skipped = []
   for (const [id, list] of Object.entries(parsed)) {
     if (!validTypeIds.includes(id) || !Array.isArray(list)) { skipped.push(id); continue }
-    // 只保留结构合法的项：名字 + 配置对象
     const clean = list
       .filter(p => p && typeof p.name === 'string' && p.values && typeof p.values === 'object' && !Array.isArray(p.values))
       .map(p => ({ name: p.name, values: JSON.parse(JSON.stringify(p.values)) }))
-    all.custom[id] = clean
+    b.custom[id] = clean
     applied.push(id)
   }
   const persisted = writeAll(all)
   return { applied, skipped, persisted }
+}
+
+export function deletePresetState(person) {
+  const all = readAll()
+  delete all[person]
+  return writeAll(all)
+}
+
+// 名单是权威：剔除存储里名单已不存在的人。
+export function prunePresetStates(validNames) {
+  const all = readAll()
+  const removed = Object.keys(all).filter(name => !validNames.includes(name))
+  if (removed.length) {
+    removed.forEach(name => delete all[name])
+    writeAll(all)
+  }
+  return removed
 }

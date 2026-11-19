@@ -95,6 +95,22 @@ body {
 .chip:hover { border-color: var(--accent); }
 .chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 500; }
 
+/* 姓名：一行一个（含删除），选中高亮；底部输入框新增 */
+.person-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.person-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 8px 6px 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: #fff; cursor: pointer; font-size: 14px; user-select: none;
+}
+.person-item.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 500; }
+.person-item input { margin: 0; }
+.person-del { margin-left: 4px; }
+.person-add { display: flex; gap: 8px; margin-top: 12px; }
+.person-add input[type=text] {
+  flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid var(--line);
+  border-radius: 6px; font-size: 14px; background: #fff;
+}
+
 .type-block { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-top: 12px; }
 .type-block > .type-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .type-block .type-name { font-weight: 600; font-size: 14px; }
