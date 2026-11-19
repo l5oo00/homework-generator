@@ -339,7 +339,7 @@ function renderConfigView(layout, wrap) {
   previewHost.id = 'preview-host'
   if (preview.sheet) {
     const shadow = el('div', 'sheet-shadow')
-    shadow.appendChild(renderSheets(preview.sheet))
+    shadow.appendChild(renderSheets(preview.sheet, false))
     previewHost.appendChild(shadow)
   }
   previewCol.appendChild(previewHost)
@@ -379,7 +379,7 @@ function renderHistoryView(layout) {
   previewHost.id = 'preview-host'
   if (historyView.sheet) {
     const shadow = el('div', 'sheet-shadow')
-    shadow.appendChild(renderSheets(historyView.sheet))
+    shadow.appendChild(renderSheets(historyView.sheet, false))
     previewHost.appendChild(shadow)
   }
   previewCol.appendChild(previewHost)

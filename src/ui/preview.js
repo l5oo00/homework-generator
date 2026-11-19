@@ -77,7 +77,8 @@ function renderAnswerSection(sec) {
   return box
 }
 
-export function renderSheets(sheet) {
+// includeAnswers：屏幕预览传 false 只显示题目页；留档导出用默认 true 保留答案页。
+export function renderSheets(sheet, includeAnswers = true) {
   const frag = document.createDocumentFragment()
   let current = null
 
@@ -99,10 +100,12 @@ export function renderSheets(sheet) {
   }
   if (current) frag.appendChild(current)
 
-  const answerSheet = el('div', 'sheet answer-sheet')
-  answerSheet.appendChild(sheetHead('答案'))
-  sheet.sections.forEach(sec => answerSheet.appendChild(renderAnswerSection(sec)))
-  frag.appendChild(answerSheet)
+  if (includeAnswers) {
+    const answerSheet = el('div', 'sheet answer-sheet')
+    answerSheet.appendChild(sheetHead('答案'))
+    sheet.sections.forEach(sec => answerSheet.appendChild(renderAnswerSection(sec)))
+    frag.appendChild(answerSheet)
+  }
 
   return frag
 }
