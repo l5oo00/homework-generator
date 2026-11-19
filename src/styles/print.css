@@ -1,0 +1,84 @@
+/* 打印样式：A4 纵向，题目页与答案页分页。屏幕上用 .sheet 预览同样版式。 */
+
+@page { size: A4 portrait; margin: 16mm 15mm; }
+
+.sheet {
+  background: #fff;
+  color: #000;
+  width: 210mm;
+  min-height: 297mm;
+  margin: 0 auto 20px;
+  padding: 16mm 15mm;
+  box-sizing: border-box;
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.sheet-head { border-bottom: 1px solid #333; padding-bottom: 6px; margin-bottom: 10px; }
+.sheet-title { font-size: 16px; font-weight: 600; text-align: center; }
+.sheet-meta { display: flex; justify-content: space-between; font-size: 12px; margin-top: 8px; }
+
+.q-section { margin-bottom: 14px; }
+.q-section-title { font-size: 13px; font-weight: 600; margin: 8px 0 6px; break-after: avoid; }
+
+.q-grid { display: grid; gap: 6px 14px; }
+.q-item { white-space: nowrap; }
+/* 序号等宽右对齐、收窄占位，避免两位数序号白白挤占题目空间 */
+.q-item .idx, .v-expr .idx, .ans-item span.k {
+  color: #bbb;
+  font-size: 0.85em;
+  display: inline-block;
+  min-width: 1.5em;
+  text-align: right;
+  margin-right: 0.25em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 竖式题：每道题占一个格子，算式下方完全留白由孩子自己列竖式 */
+.v-grid { display: grid; gap: 14px 20px; }
+.v-item { break-inside: avoid; }
+.v-item .v-expr { margin-bottom: 4px; }
+.v-blank { height: 8mm; }
+.v-answer-row { display: flex; gap: 6px; }
+
+/* 答案页 */
+.answer-sheet .answer-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 16px; font-size: 12px; }
+.answer-sheet .answer-section { margin-bottom: 12px; break-inside: avoid; }
+.answer-sheet .answer-section-title { font-weight: 600; margin-bottom: 4px; }
+
+/* 每张 sheet 是独立一页：屏幕预览看到独立 A4，打印也自然分页 */
+.sheet + .sheet { break-before: page; page-break-before: always; }
+
+/* 独占页：行数由 JS 均分，行高填满整页 */
+.full-page-sheet .q-section {
+  height: 248mm;
+  display: flex;
+  flex-direction: column;
+  break-inside: avoid;
+}
+.full-page-sheet .fill-grid { flex: 1; min-height: 0; align-content: stretch; }
+.full-page-sheet .q-item { display: flex; align-items: center; }
+.full-page-sheet .v-item { display: flex; flex-direction: column; }
+.full-page-sheet .v-blank { height: auto; flex: 1; }
+
+/* 打印题目时隐藏答案页。放在 print 媒体查询之外，便于屏幕预览直接验证。 */
+body.print-questions-only .answer-sheet { display: none !important; }
+
+/* 屏幕上隐藏打印按钮区、显示阴影容器；打印时反过来 */
+@media screen {
+  .sheet { box-shadow: 0 1px 6px rgba(0,0,0,.12); }
+}
+@media print {
+  body { background: #fff; }
+  .no-print { display: none !important; }
+  /* 屏幕上的限高一屏/双栏滚动在打印时全部还原为自然文档流 */
+  html, body { height: auto !important; overflow: visible !important; }
+  .wrap { display: block !important; height: auto !important; max-width: none !important; padding: 0 !important; }
+  .layout { display: block !important; height: auto !important; }
+  .preview-col { height: auto !important; overflow: visible !important; padding-right: 0 !important; }
+  .preview-toolbar { position: static !important; }
+  .sheet-shadow { background: none; padding: 0; overflow: visible; }
+  /* 打印时由 @page margin 控制页边距，sheet 自身不再占尺寸 */
+  .sheet { box-shadow: none; margin: 0; width: auto; min-height: auto; padding: 0; }
+  /* 题目页首行不重复表头的问题由分页控制 */
+  .sheet-head { padding-top: 0; }
+}
