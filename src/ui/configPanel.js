@@ -114,7 +114,7 @@ function renderFields(type, config, onChange) {
 
 // 渲染一个题型的可选配置区（勾选框 + 预设 + 字段）。
 // 预设可一键套用、可删除；当前配置等于某预设时该按钮高亮。
-export function renderTypeSelector(type, state, onToggle, onSavePreset, onDeletePreset) {
+export function renderTypeSelector(type, state, onChange, onSavePreset, onDeletePreset) {
   const block = el('div', { class: 'type-block' })
   const defaults = type.defaultConfig()
 
@@ -125,7 +125,7 @@ export function renderTypeSelector(type, state, onToggle, onSavePreset, onDelete
   cb.addEventListener('change', () => {
     state.selected = cb.checked
     body.style.display = cb.checked ? '' : 'none'
-    onToggle()
+    onChange()
   })
   nameLabel.appendChild(cb)
   nameLabel.appendChild(el('span', { text: type.name }))
@@ -155,6 +155,7 @@ export function renderTypeSelector(type, state, onToggle, onSavePreset, onDelete
         Object.assign(state.config, type.defaultConfig(), JSON.parse(JSON.stringify(p.values)))
         paintFields()
         updateHighlights()
+        onChange()
       })
       item.appendChild(btn)
       const del = el('button', { type: 'button', class: 'preset-del', text: '×', title: '删除预设' })
@@ -184,7 +185,10 @@ export function renderTypeSelector(type, state, onToggle, onSavePreset, onDelete
 
   const fieldsBox = el('div')
   function paintFields() {
-    fieldsBox.replaceChildren(renderFields(type, state.config, updateHighlights))
+    fieldsBox.replaceChildren(renderFields(type, state.config, () => {
+      updateHighlights()
+      onChange()
+    }))
   }
   paintFields()
   body.appendChild(fieldsBox)

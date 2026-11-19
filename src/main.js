@@ -11,13 +11,15 @@ import { renderSheets } from './ui/preview.js'
 import { downloadText } from './ui/download.js'
 import { downloadQuestionAnswerFile, openAnswerDialog, renderAnswerViewIfRequested } from './ui/answerShare.js'
 import { saveFinalSheet, listFinalSheets, deleteFinalSheet } from './storage/history.js'
+import { loadSelectionState, saveSelectionState } from './storage/selection.js'
 import { loadPresetState, addCustomPreset, removeCustomPreset, removeBuiltinPreset, exportPresetsJson, importPresetsJson, presetMatchesConfig } from './ui/presets.js'
 
 const app = document.getElementById('app')
+const savedSelection = loadSelectionState()
 
 // 全局状态：科目 + 全局配置 + 每个题型是否选中及其配置
 const state = {
-  subject: SUBJECTS[0].id,
+  subject: SUBJECTS.some(s => s.id === savedSelection.subject) ? savedSelection.subject : SUBJECTS[0].id,
   global: defaultGlobalConfig(),
   selected: {}
 }
@@ -43,14 +45,24 @@ for (const sub of SUBJECTS) {
       ...st.custom.map(p => ({ ...p, custom: true })),
       ...t.builtinPresets
     ]
-    // 默认套用第一个预设；预设值可能省略字段，先用默认值补齐再覆盖。
-    const firstPreset = t.presets[0]
-    const config = firstPreset
-      ? { ...t.defaultConfig(), ...JSON.parse(JSON.stringify(firstPreset.values)) }
-      : t.defaultConfig()
-    state.selected[t.id] = { selected: false, config }
+    // 有存档就恢复存档；没有则默认套用第一个预设。字段以默认配置补齐。
+    const defaults = t.defaultConfig()
+    const savedType = savedSelection.types[t.id]
+    const config = { ...defaults }
+    if (savedType && savedType.config && typeof savedType.config === 'object') {
+      for (const key of Object.keys(defaults)) {
+        if (savedType.config[key] !== undefined) config[key] = savedType.config[key]
+      }
+    } else if (t.presets[0]) {
+      Object.assign(config, JSON.parse(JSON.stringify(t.presets[0].values)))
+    }
+    state.selected[t.id] = { selected: !!(savedType && savedType.selected), config }
     presetMap[t.id] = t.presets
   }
+}
+
+function persistSelections() {
+  saveSelectionState(state.subject, state.selected)
 }
 
 function rebuildPresetMap() {
@@ -261,6 +273,7 @@ function renderConfigView(layout, wrap) {
     if (sub.id === state.subject) chip.classList.add('on')
     chip.addEventListener('click', () => {
       state.subject = sub.id
+      persistSelections()
       render()
     })
     subChips.appendChild(chip)
@@ -278,7 +291,7 @@ function renderConfigView(layout, wrap) {
     typeCard.appendChild(el('div', 'hint', '该科目暂无题型，后续迭代会加入。'))
   }
   for (const t of types) {
-    typeCard.appendChild(renderTypeSelector(t, state.selected[t.id], () => {}, savePreset, deletePreset))
+    typeCard.appendChild(renderTypeSelector(t, state.selected[t.id], persistSelections, savePreset, deletePreset))
   }
   configCol.appendChild(typeCard)
   layout.appendChild(configCol)
